@@ -21,6 +21,7 @@
     "福星高照", "洪福齐天", "好运连连", "福运连连"
   ];
 
+  const SPOTLIGHT_INTERVAL = 500;
   const $ = (selector) => document.querySelector(selector);
   const welcome = $("#welcome");
   const celebration = $("#celebration");
@@ -29,13 +30,14 @@
   const soundButton = $("#soundButton");
   const spotlightCard = $("#spotlightCard");
   const spotlightText = $("#spotlightText");
-  const wishLayer = $("#wishLayer");
-  const wishStage = $("#wishStage");
   const progressText = $("#progressText");
   const progressBar = $("#progressBar");
   const toast = $("#toast");
   const confettiCanvas = $("#confetti");
   const confettiContext = confettiCanvas.getContext("2d");
+  const heartViewport = $("#heartViewport");
+  const heartSpace = $("#heartSpace");
+  const heartWords = $("#heartWords");
 
   const params = new URLSearchParams(window.location.search);
   const requestedName = (params.get("to") || params.get("name") || "").trim();
@@ -45,17 +47,36 @@
   document.title = `生日快乐｜送给${friendName}的满满祝福`;
 
   let started = false;
+  let heartFormed = false;
   let spotlightIndex = 0;
-  let bubbleIndex = 0;
-  let bubbleQueue = [];
   let spotlightTimer = null;
-  let bubbleTimer = null;
   let confettiTimer = null;
   let toastTimer = null;
   let soundEnabled = true;
   let audioContext = null;
   let melodyTimer = null;
   let activeOscillators = [];
+  let wantsGyroscope = false;
+
+  let targetRotX = -8;
+  let targetRotY = 0;
+  let currentRotX = -8;
+  let currentRotY = 0;
+  let currentZoom = 1;
+  let targetZoom = 1;
+  let dragging = false;
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let dragLastX = 0;
+  let dragLastY = 0;
+  let dragDistance = 0;
+  let pressedWord = null;
+  let lastFrameTime = performance.now();
+  let orientationBase = null;
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
 
   function shuffle(items) {
     const result = items.slice();
@@ -70,27 +91,63 @@
     window.clearTimeout(toastTimer);
     toast.textContent = message;
     toast.classList.add("show");
-    toastTimer = window.setTimeout(() => toast.classList.remove("show"), 1900);
+    toastTimer = window.setTimeout(() => toast.classList.remove("show"), 1800);
   }
 
   function clearTimers() {
     window.clearTimeout(spotlightTimer);
-    window.clearTimeout(bubbleTimer);
     window.clearTimeout(confettiTimer);
     spotlightTimer = null;
-    bubbleTimer = null;
     confettiTimer = null;
+  }
+
+  function createHeartWords() {
+    heartWords.replaceChildren();
+    const layers = 5;
+    const wordsPerLayer = wishes.length / layers;
+    const depthZ = [47, 23, 0, -23, -47];
+    const wordOpacity = [0.98, 0.78, 0.6, 0.44, 0.32];
+    wishes.forEach((wish, index) => {
+      const layer = Math.floor(index / wordsPerLayer);
+      const positionInLayer = index % wordsPerLayer;
+      const t = (positionInLayer / wordsPerLayer) * Math.PI * 2 + layer * (Math.PI / 50);
+      const z = depthZ[layer];
+      const x = 16 * Math.pow(Math.sin(t), 3) * 7.35;
+      const heartY = 13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t);
+      const y = -heartY * 7.35;
+      const rotateY = (x >= 0 ? -11 : 11) + (Math.random() * 7 - 3.5);
+      const rotateZ = -6 + Math.random() * 12;
+      const word = document.createElement("span");
+      word.className = "word-3d" + (layer <= 1 ? " is-front" : "");
+      word.textContent = wish;
+      word.dataset.wish = wish;
+      word.style.setProperty("--hue", [338, 20, 48, 275, 205][layer]);
+      word.style.setProperty("--word-size", `${9 + ((index + layer) % 3)}px`);
+      word.style.setProperty("--opacity", wordOpacity[layer].toFixed(2));
+      word.style.setProperty(
+        "--target-transform",
+        `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, ${z}px) rotateY(${rotateY.toFixed(1)}deg) rotateZ(${rotateZ.toFixed(1)}deg) scale(1)`
+      );
+      heartWords.appendChild(word);
+    });
   }
 
   function resetShow() {
     clearTimers();
     spotlightIndex = 0;
-    bubbleIndex = 0;
-    bubbleQueue = shuffle(wishes);
-    wishLayer.replaceChildren();
-    spotlightCard.classList.remove("show", "pop");
+    heartFormed = false;
+    spotlightCard.classList.remove("is-converging");
+    heartViewport.classList.remove("is-active");
+    heartViewport.setAttribute("aria-hidden", "true");
+    heartWords.querySelectorAll(".word-3d").forEach((word) => word.classList.remove("is-formed", "word-hit"));
     progressBar.style.width = "0%";
     progressText.textContent = `祝福 0 / ${wishes.length}`;
+    targetRotX = -8;
+    targetRotY = 0;
+    targetZoom = 1;
+    currentRotX = -8;
+    currentRotY = 0;
+    currentZoom = 1;
   }
 
   function startShow() {
@@ -103,74 +160,146 @@
     window.setTimeout(() => {
       spotlightCard.classList.add("show");
       nextSpotlight();
-      burstConfetti(window.innerWidth / 2, window.innerHeight * 0.46, 110);
-    }, 420);
+      burstConfetti(window.innerWidth / 2, window.innerHeight * 0.46, 120);
+    }, 360);
 
-    bubbleTimer = window.setTimeout(spawnBubble, 320);
-    confettiTimer = window.setTimeout(confettiLoop, 1500);
+    confettiTimer = window.setTimeout(confettiLoop, 1400);
     playMelody();
   }
 
   function nextSpotlight() {
-    if (!started) return;
-    const wish = wishes[spotlightIndex];
-    spotlightText.textContent = wish;
+    if (!started || heartFormed) return;
+    spotlightText.textContent = wishes[spotlightIndex];
     spotlightCard.classList.remove("pop");
     void spotlightCard.offsetWidth;
     spotlightCard.classList.add("show", "pop");
     progressText.textContent = `祝福 ${spotlightIndex + 1} / ${wishes.length}`;
     progressBar.style.width = `${((spotlightIndex + 1) / wishes.length) * 100}%`;
 
-    if ((spotlightIndex + 1) % 8 === 0) {
-      burstConfetti(window.innerWidth * (0.22 + Math.random() * 0.56), window.innerHeight * (0.2 + Math.random() * 0.35), 48);
-    }
-
     spotlightIndex += 1;
     if (spotlightIndex >= wishes.length) {
-      spotlightTimer = window.setTimeout(() => {
-        spotlightText.textContent = "福运连连，快乐不停";
-        progressText.textContent = "祝福已全部送达";
-        progressBar.style.width = "100%";
-        burstConfetti(window.innerWidth / 2, window.innerHeight * 0.34, 150);
-        spotlightIndex = 0;
-        bubbleQueue = shuffle(wishes);
-        bubbleIndex = 0;
-        spotlightTimer = window.setTimeout(nextSpotlight, 2200);
-      }, 1500);
+      progressText.textContent = "100 句祝福汇聚中…";
+      spotlightTimer = window.setTimeout(formHeart, 560);
     } else {
-      spotlightTimer = window.setTimeout(nextSpotlight, 1650);
+      spotlightTimer = window.setTimeout(nextSpotlight, SPOTLIGHT_INTERVAL);
     }
   }
 
-  function spawnBubble() {
-    if (!started) return;
-    if (bubbleIndex >= bubbleQueue.length) {
-      bubbleQueue = shuffle(wishes);
-      bubbleIndex = 0;
-    }
+  function formHeart() {
+    if (heartFormed) return;
+    heartFormed = true;
+    clearTimers();
+    spotlightCard.classList.add("is-converging");
+    heartViewport.classList.add("is-active");
+    heartViewport.setAttribute("aria-hidden", "false");
 
-    const wish = bubbleQueue[bubbleIndex];
-    bubbleIndex += 1;
+    const words = Array.from(heartWords.querySelectorAll(".word-3d"));
+    words.forEach((word, index) => {
+      window.setTimeout(() => word.classList.add("is-formed"), index * 11);
+    });
 
-    const bubble = document.createElement("div");
-    bubble.className = "wish-bubble";
-    bubble.textContent = wish;
-    const hue = [338, 20, 48, 275, 205][Math.floor(Math.random() * 5)];
-    bubble.style.setProperty("--hue", hue);
-    bubble.style.setProperty("--rise", `${110 + Math.random() * 210}px`);
-    bubble.style.setProperty("--rotate", `${-7 + Math.random() * 14}deg`);
-    bubble.style.setProperty("--duration", `${4.8 + Math.random() * 2.8}s`);
-    bubble.style.left = `${7 + Math.random() * 76}%`;
-    bubble.style.top = `${20 + Math.random() * 58}%`;
-    bubble.style.fontSize = `${12 + Math.random() * 5}px`;
-
-    wishLayer.appendChild(bubble);
-    while (wishLayer.childElementCount > 24) {
-      wishLayer.firstElementChild.remove();
-    }
-    window.setTimeout(() => bubble.remove(), 7800);
-    bubbleTimer = window.setTimeout(spawnBubble, 480 + Math.random() * 360);
+    window.setTimeout(() => {
+      spotlightCard.classList.remove("show", "is-converging");
+      progressText.textContent = "100 句祝福已汇聚成爱";
+      progressBar.style.width = "100%";
+      burstConfetti(window.innerWidth / 2, window.innerHeight * 0.38, 180);
+      showToast("拖拽旋转，倾斜手机也能看");
+    }, 1550);
+    playMelody();
   }
+
+  function enableGyroscope() {
+    const handler = (event) => {
+      wantsGyroscope = true;
+      if (event.beta == null || event.gamma == null) return;
+      if (!orientationBase) orientationBase = { beta: event.beta, gamma: event.gamma };
+      targetRotY = clamp((event.gamma - orientationBase.gamma) * 0.72, -52, 52);
+      targetRotX = clamp(-8 + (event.beta - orientationBase.beta) * 0.38, -48, 34);
+      targetZoom = 1.02;
+    };
+
+    if (typeof DeviceOrientationEvent === "undefined") {
+      wantsGyroscope = false;
+      showToast("当前浏览器不支持陀螺仪，拖动也能旋转");
+      return;
+    }
+    if (typeof DeviceOrientationEvent.requestPermission === "function") {
+      DeviceOrientationEvent.requestPermission().then((permission) => {
+        if (permission === "granted") {
+          window.addEventListener("deviceorientation", handler, true);
+        } else {
+          wantsGyroscope = false;
+          showToast("陀螺仪未授权，可拖拽旋转");
+        }
+      }).catch(() => {
+        wantsGyroscope = false;
+      });
+    } else {
+      window.addEventListener("deviceorientation", handler, true);
+    }
+  }
+
+  function startHeartLoop() {
+    function loop(now) {
+      const delta = Math.min(32, now - lastFrameTime);
+      lastFrameTime = now;
+      if (!dragging) {
+        const autoSpeed = wantsGyroscope ? 0.0045 : 0.038;
+        targetRotY += autoSpeed * delta;
+      }
+      currentRotY += (targetRotY - currentRotY) * 0.08;
+      currentRotX += (targetRotX - currentRotX) * 0.08;
+      currentZoom += (targetZoom - currentZoom) * 0.08;
+      heartSpace.style.transform = `rotateX(${currentRotX.toFixed(2)}deg) rotateY(${currentRotY.toFixed(2)}deg) scale(${currentZoom.toFixed(3)})`;
+      window.requestAnimationFrame(loop);
+    }
+    window.requestAnimationFrame(loop);
+  }
+
+  heartViewport.addEventListener("pointerdown", (event) => {
+    dragging = true;
+    pressedWord = event.target.closest(".word-3d");
+    dragStartX = dragLastX = event.clientX;
+    dragStartY = dragLastY = event.clientY;
+    dragDistance = 0;
+    heartViewport.setPointerCapture(event.pointerId);
+  });
+
+  heartViewport.addEventListener("pointermove", (event) => {
+    if (!dragging) return;
+    const dx = event.clientX - dragLastX;
+    const dy = event.clientY - dragLastY;
+    dragLastX = event.clientX;
+    dragLastY = event.clientY;
+    dragDistance += Math.abs(dx) + Math.abs(dy);
+    targetRotY += dx * 0.48;
+    targetRotX = clamp(targetRotX - dy * 0.36, -62, 62);
+  });
+
+  heartViewport.addEventListener("pointerup", (event) => {
+    dragging = false;
+    if (dragDistance < 9 && pressedWord) {
+      pressedWord.classList.remove("word-hit");
+      void pressedWord.offsetWidth;
+      pressedWord.classList.add("word-hit");
+      showToast(`「${pressedWord.dataset.wish}」送给你`);
+      burstConfetti(event.clientX, event.clientY, 28);
+    }
+    pressedWord = null;
+  });
+
+  heartViewport.addEventListener("pointercancel", () => {
+    dragging = false;
+  });
+
+  heartViewport.addEventListener("dblclick", () => {
+    targetZoom = targetZoom > 1.12 ? 0.92 : 1.34;
+  });
+
+  heartViewport.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    targetZoom = clamp(targetZoom - event.deltaY * 0.001, 0.78, 1.55);
+  }, { passive: false });
 
   function resizeConfetti() {
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
@@ -216,7 +345,6 @@
       piece.x += piece.vx;
       piece.y += piece.vy;
       piece.rotation += piece.rotationSpeed;
-
       const opacity = Math.max(0, 1 - piece.age / piece.life);
       confettiContext.save();
       confettiContext.globalAlpha = opacity;
@@ -225,22 +353,15 @@
       confettiContext.fillStyle = piece.color;
       confettiContext.fillRect(-piece.width / 2, -piece.height / 2, piece.width, piece.height);
       confettiContext.restore();
-
-      if (piece.age >= piece.life || piece.y > window.innerHeight + 50) {
-        confetti.splice(index, 1);
-      }
+      if (piece.age >= piece.life || piece.y > window.innerHeight + 50) confetti.splice(index, 1);
     }
     window.requestAnimationFrame(drawConfetti);
   }
 
   function confettiLoop() {
     if (!started) return;
-    burstConfetti(
-      window.innerWidth * (0.18 + Math.random() * 0.64),
-      window.innerHeight * (0.16 + Math.random() * 0.3),
-      34
-    );
-    confettiTimer = window.setTimeout(confettiLoop, 2800);
+    burstConfetti(window.innerWidth * (0.18 + Math.random() * 0.64), window.innerHeight * (0.16 + Math.random() * 0.3), 32);
+    confettiTimer = window.setTimeout(confettiLoop, 3200);
   }
 
   const melodies = [
@@ -257,12 +378,8 @@
     if (!AudioContextClass) return;
     if (!audioContext) audioContext = new AudioContextClass();
     audioContext.resume().catch(() => {});
-
-    activeOscillators.forEach((oscillator) => {
-      try { oscillator.stop(); } catch (_) {}
-    });
+    activeOscillators.forEach((oscillator) => { try { oscillator.stop(); } catch (_) {} });
     activeOscillators = [];
-
     const startAt = audioContext.currentTime + 0.08;
     let cursor = startAt;
     melodies.forEach(([frequency, duration]) => {
@@ -280,30 +397,29 @@
       activeOscillators.push(oscillator);
       cursor += duration;
     });
-
-    const totalDuration = cursor - startAt;
-    melodyTimer = window.setTimeout(playMelody, (totalDuration + 3.2) * 1000);
+    melodyTimer = window.setTimeout(playMelody, (cursor - startAt + 3.2) * 1000);
   }
 
   function stopMelody() {
     window.clearTimeout(melodyTimer);
-    activeOscillators.forEach((oscillator) => {
-      try { oscillator.stop(); } catch (_) {}
-    });
+    activeOscillators.forEach((oscillator) => { try { oscillator.stop(); } catch (_) {} });
     activeOscillators = [];
   }
 
   startButton.addEventListener("click", () => {
     if (navigator.vibrate) navigator.vibrate([25, 40, 25]);
+    enableGyroscope();
     startShow();
   });
 
   replayButton.addEventListener("click", () => {
     resetShow();
+    started = true;
+    spotlightCard.classList.add("show");
+    restartConfetti();
     nextSpotlight();
-    burstConfetti(window.innerWidth / 2, window.innerHeight * 0.4, 100);
     playMelody();
-    showToast("祝福重新开始啦");
+    showToast("100 句祝福重新开始");
   });
 
   soundButton.addEventListener("click", () => {
@@ -318,19 +434,26 @@
     }
   });
 
-  wishStage.addEventListener("pointerdown", (event) => {
-    burstConfetti(event.clientX, event.clientY, 32);
-  });
+  function restartConfetti() {
+    window.clearTimeout(confettiTimer);
+    burstConfetti(window.innerWidth / 2, window.innerHeight * 0.42, 90);
+    confettiTimer = window.setTimeout(confettiLoop, 1400);
+  }
 
   window.addEventListener("resize", resizeConfetti);
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) {
-      stopMelody();
-    } else if (started && soundEnabled) {
-      playMelody();
-    }
+    if (document.hidden) stopMelody();
+    else if (started && soundEnabled) playMelody();
   });
 
+  createHeartWords();
   resizeConfetti();
+  startHeartLoop();
   window.requestAnimationFrame(drawConfetti);
 })();
+
+
+
+
+
+
