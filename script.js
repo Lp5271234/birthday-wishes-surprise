@@ -21,11 +21,11 @@
     "福星高照", "洪福齐天", "好运连连", "福运连连"
   ];
 
-  const GROUP_SIZE = 5;
-  const TOTAL_GROUPS = wishes.length / GROUP_SIZE;
   const DETECTED_BPM = 129.2;
-  const THREE_BEATS_MS = (60000 / DETECTED_BPM) * 3;
-  const START_DELAY_MS = 450;
+  const BEAT_SECONDS = 60 / DETECTED_BPM;
+  const FIRST_BEAT_SECONDS = 0.488;
+  const ANIMATION_SPEED = 1.75;
+  const AUDIO_PLAYBACK_RATE = 1.0;
 
   const $ = (selector) => document.querySelector(selector);
   const welcome = $("#welcome");
@@ -36,6 +36,7 @@
   const spotlightCard = $("#spotlightCard");
   const batchGrid = $("#batchGrid");
   const wishLayer = $("#wishLayer");
+  const wishStage = $("#wishStage");
   const progressText = $("#progressText");
   const progressBar = $("#progressBar");
   const toast = $("#toast");
@@ -58,11 +59,15 @@
 
   let started = false;
   let heartFormed = false;
-  let groupIndex = 0;
+  let heartScheduled = false;
+  let beatIndex = 0;
+  let beatSyncStarted = false;
+  let beatAnimationFrame = null;
   let groupTimer = null;
   let confettiTimer = null;
   let toastTimer = null;
   let soundEnabled = true;
+  let sequenceStartedAt = 0;
   let wantsGyroscope = false;
 
   let targetRotX = -8;
@@ -96,14 +101,19 @@
   function clearTimers() {
     window.clearTimeout(groupTimer);
     window.clearTimeout(confettiTimer);
+    if (beatAnimationFrame) window.cancelAnimationFrame(beatAnimationFrame);
     groupTimer = null;
     confettiTimer = null;
+    beatAnimationFrame = null;
   }
 
   function ensureMusicPlaying() {
     if (!soundEnabled) return Promise.resolve();
     backgroundMusic.volume = 0.76;
     backgroundMusic.muted = false;
+    backgroundMusic.playbackRate = AUDIO_PLAYBACK_RATE;
+    backgroundMusic.defaultPlaybackRate = AUDIO_PLAYBACK_RATE;
+    backgroundMusic.preservesPitch = true;
     const playResult = backgroundMusic.play();
     return playResult && typeof playResult.catch === "function" ? playResult.catch(() => {}) : Promise.resolve();
   }
@@ -141,12 +151,15 @@
 
   function resetShow() {
     clearTimers();
-    groupIndex = 0;
+    beatSyncStarted = false;
+    beatIndex = 0;
     heartFormed = false;
+    heartScheduled = false;
     spotlightCard.classList.remove("is-converging");
     heartViewport.classList.remove("is-active");
     heartViewport.setAttribute("aria-hidden", "true");
     heartWords.querySelectorAll(".word-3d").forEach((word) => word.classList.remove("is-formed", "word-hit"));
+    wishLayer.classList.remove("is-clearing");
     wishLayer.replaceChildren();
     batchGrid.replaceChildren();
     progressBar.style.width = "0%";
@@ -167,79 +180,106 @@
     celebration.classList.add("is-active");
     celebration.setAttribute("aria-hidden", "false");
     soundButton.textContent = "背景音乐开";
-
-    ensureMusicPlaying();
-    groupTimer = window.setTimeout(showNextGroup, START_DELAY_MS);
+    sequenceStartedAt = performance.now();
     burstConfetti(window.innerWidth / 2, window.innerHeight * 0.46, 100);
     confettiTimer = window.setTimeout(confettiLoop, 1700);
+
+    ensureMusicPlaying().then(startBeatSync);
+    window.setTimeout(startBeatSync, 700);
   }
 
-  function showNextGroup() {
+  function startBeatSync() {
+    if (beatSyncStarted || heartFormed) return;
+    beatSyncStarted = true;
+    sequenceStartedAt = performance.now();
+    beatAnimationFrame = window.requestAnimationFrame(syncToBeat);
+  }
+
+  function syncToBeat() {
     if (!started || heartFormed) return;
-    if (groupIndex >= TOTAL_GROUPS) {
-      groupTimer = window.setTimeout(formHeart, 900);
-      return;
+    const audioPlaying = !backgroundMusic.paused && backgroundMusic.currentTime > 0;
+    const timeline = audioPlaying
+      ? backgroundMusic.currentTime
+      : (performance.now() - sequenceStartedAt) / 1000;
+    const animationBeat = BEAT_SECONDS / ANIMATION_SPEED;
+
+    while (beatIndex < wishes.length) {
+      const reached = timeline >= FIRST_BEAT_SECONDS + beatIndex * animationBeat;
+      if (!reached) break;
+      popWish(beatIndex);
+      beatIndex += 1;
     }
 
-    const start = groupIndex * GROUP_SIZE;
-    const group = wishes.slice(start, start + GROUP_SIZE);
+    if (beatIndex >= wishes.length) {
+      if (!heartScheduled) {
+        heartScheduled = true;
+        groupTimer = window.setTimeout(formHeart, 760);
+      }
+      return;
+    }
+    beatAnimationFrame = window.requestAnimationFrame(syncToBeat);
+  }
+
+  function popWish(index) {
+    const wish = wishes[index];
     batchGrid.replaceChildren();
-    group.forEach((wish, index) => {
-      const item = document.createElement("span");
-      item.className = "batch-word";
-      item.textContent = wish;
-      item.style.setProperty("--i", index);
-      batchGrid.appendChild(item);
-    });
+    const current = document.createElement("span");
+    current.className = "batch-word";
+    current.textContent = wish;
+    batchGrid.appendChild(current);
 
     spotlightCard.classList.remove("pop");
     void spotlightCard.offsetWidth;
     spotlightCard.classList.add("show", "pop");
-    spawnBatchBubbles(group);
-    groupIndex += 1;
-    progressText.textContent = `祝福 ${groupIndex * GROUP_SIZE} / ${wishes.length} · 每3拍一组`;
-    progressBar.style.width = `${((groupIndex * GROUP_SIZE) / wishes.length) * 100}%`;
 
-    if (groupIndex >= TOTAL_GROUPS) {
-      groupTimer = window.setTimeout(formHeart, 980);
-    } else {
-      groupTimer = window.setTimeout(showNextGroup, THREE_BEATS_MS);
+    const stageWidth = wishStage.clientWidth || window.innerWidth;
+    const stageHeight = wishStage.clientHeight || window.innerHeight;
+    const x = (Math.random() * 0.82 - 0.41) * stageWidth;
+    const y = (Math.random() * 0.56 - 0.28) * stageHeight;
+    const driftX = 8 + Math.random() * 22;
+    const driftY = -(8 + Math.random() * 28);
+    const node = document.createElement("div");
+    const drift = document.createElement("div");
+    const pill = document.createElement("span");
+    node.className = "floating-wish is-latest";
+    node.style.setProperty("--dx", `${x.toFixed(1)}px`);
+    node.style.setProperty("--dy", `${y.toFixed(1)}px`);
+    node.style.setProperty("--word-opacity", `${(0.68 + Math.random() * 0.26).toFixed(2)}`);
+    drift.className = "floating-drift";
+    drift.style.setProperty("--drift-x", `${driftX}px`);
+    drift.style.setProperty("--drift-y", `${driftY}px`);
+    drift.style.setProperty("--drift-time", `${5.5 + Math.random() * 5.5}s`);
+    drift.style.setProperty("--drift-delay", `${-Math.random() * 3}s`);
+    drift.style.setProperty("--drift-rotate", `${-10 + Math.random() * 20}deg`);
+    pill.className = "floating-pill";
+    pill.textContent = wish;
+    pill.style.setProperty("--hue", [338, 20, 48, 275, 205][index % 5]);
+    pill.style.setProperty("--float-size", `${11 + (index % 4)}px`);
+    drift.appendChild(pill);
+    node.appendChild(drift);
+    wishLayer.appendChild(node);
+
+    window.setTimeout(() => node.classList.remove("is-latest"), 720);
+    progressText.textContent = `祝福 ${index + 1} / ${wishes.length} · 跟随音乐 1.75 倍速`;
+    progressBar.style.width = `${((index + 1) / wishes.length) * 100}%`;
+    if ((index + 1) % 10 === 0) {
+      burstConfetti(window.innerWidth * (0.2 + Math.random() * 0.6), window.innerHeight * (0.2 + Math.random() * 0.35), 26);
     }
-  }
-
-  function spawnBatchBubbles(group) {
-    const anchors = [
-      [17, 28], [70, 24], [12, 54], [73, 57], [44, 72]
-    ];
-    group.forEach((wish, index) => {
-      const bubble = document.createElement("div");
-      bubble.className = "wish-bubble";
-      bubble.textContent = wish;
-      bubble.style.setProperty("--hue", [338, 20, 48, 275, 205][index]);
-      bubble.style.setProperty("--rise", `${48 + Math.random() * 70}px`);
-      bubble.style.setProperty("--rotate", `${-6 + Math.random() * 12}deg`);
-      bubble.style.setProperty("--duration", `${1.26 + Math.random() * .14}s`);
-      bubble.style.left = `${anchors[index][0]}%`;
-      bubble.style.top = `${anchors[index][1]}%`;
-      bubble.style.fontSize = `${12 + (index % 3)}px`;
-      bubble.style.animationDelay = `${index * 35}ms`;
-      wishLayer.appendChild(bubble);
-      window.setTimeout(() => bubble.remove(), 1750);
-    });
-    while (wishLayer.childElementCount > 20) wishLayer.firstElementChild.remove();
   }
 
   function formHeart() {
     if (heartFormed) return;
     heartFormed = true;
     clearTimers();
+    wishLayer.classList.add("is-clearing");
+    window.setTimeout(() => wishLayer.replaceChildren(), 1150);
     spotlightCard.classList.add("is-converging");
     heartViewport.classList.add("is-active");
     heartViewport.setAttribute("aria-hidden", "false");
 
     const words = Array.from(heartWords.querySelectorAll(".word-3d"));
     words.forEach((word, index) => {
-      window.setTimeout(() => word.classList.add("is-formed"), index * 8);
+      window.setTimeout(() => word.classList.add("is-formed"), index * 7);
     });
 
     window.setTimeout(() => {
@@ -249,7 +289,7 @@
       burstConfetti(window.innerWidth / 2, window.innerHeight * 0.38, 190);
       showToast("拖动旋转，放大看看整颗爱心");
       ensureMusicPlaying();
-    }, 840);
+    }, 820);
   }
 
   function enableGyroscope() {
@@ -261,10 +301,8 @@
       targetRotX = clamp(-8 + (event.beta - orientationBase.beta) * 0.38, -48, 34);
       targetZoom = 1.02;
     };
-
     if (typeof DeviceOrientationEvent === "undefined") {
       wantsGyroscope = false;
-      showToast("当前浏览器不支持陀螺仪，拖动也能旋转");
       return;
     }
     if (typeof DeviceOrientationEvent.requestPermission === "function") {
@@ -350,11 +388,9 @@
 
   heartViewport.addEventListener("pointerup", releasePointer);
   heartViewport.addEventListener("pointercancel", releasePointer);
-
   heartViewport.addEventListener("dblclick", () => {
     targetZoom = targetZoom > 1.12 ? 0.92 : 1.34;
   });
-
   heartViewport.addEventListener("wheel", (event) => {
     event.preventDefault();
     targetZoom = clamp(targetZoom - event.deltaY * 0.001, 0.72, 1.8);
@@ -362,7 +398,7 @@
 
   function changeZoom(delta) {
     targetZoom = clamp(targetZoom + delta, 0.72, 1.8);
-    showToast(targetZoom > 1 ? "爱心已放大" : "爱心已缩小");
+    showToast(delta > 0 ? "爱心已放大" : "爱心已缩小");
   }
 
   [[zoomOutButton, -0.18], [zoomInButton, 0.18], [zoomResetButton, 1]].forEach(([button, value]) => {
@@ -438,8 +474,9 @@
 
   function confettiLoop() {
     if (!started) return;
-    burstConfetti(window.innerWidth * (0.18 + Math.random() * 0.64), window.innerHeight * (0.16 + Math.random() * 0.3), 32);
-    confettiTimer = window.setTimeout(confettiLoop, 3200);
+    const spread = beatIndex / wishes.length;
+    burstConfetti(window.innerWidth * (0.18 + Math.random() * 0.64), window.innerHeight * (0.16 + Math.random() * 0.3), 12 + Math.round(spread * 24));
+    confettiTimer = window.setTimeout(confettiLoop, 3600);
   }
 
   startButton.addEventListener("click", () => {
@@ -451,11 +488,11 @@
   replayButton.addEventListener("click", () => {
     resetShow();
     started = true;
-    heartViewport.classList.remove("is-active");
-    groupTimer = window.setTimeout(showNextGroup, START_DELAY_MS);
-    burstConfetti(window.innerWidth / 2, window.innerHeight * 0.42, 80);
+    sequenceStartedAt = performance.now();
     ensureMusicPlaying();
-    showToast("100 句祝福重新开始，音乐继续播放");
+    startBeatSync();
+    burstConfetti(window.innerWidth / 2, window.innerHeight * 0.42, 80);
+    showToast("重新开始，音乐继续播放");
   });
 
   soundButton.addEventListener("click", () => {
@@ -476,4 +513,6 @@
   startHeartLoop();
   window.requestAnimationFrame(drawConfetti);
 })();
+
+
 
