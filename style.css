@@ -675,3 +675,132 @@ h1 strong {
     transition-duration: .15s !important;
   }
 }
+
+/* 100 words converge into an interactive CSS 3D heart. */
+.heart-viewport {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  display: none;
+  perspective: 920px;
+  touch-action: none;
+  cursor: grab;
+}
+
+.heart-viewport.is-active {
+  display: block;
+}
+
+.heart-viewport:active {
+  cursor: grabbing;
+}
+
+.heart-space {
+  position: absolute;
+  left: 50%;
+  top: 47%;
+  width: 0;
+  height: 0;
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.heart-glow-3d {
+  position: absolute;
+  left: -115px;
+  top: -120px;
+  width: 230px;
+  height: 220px;
+  background: transparent;
+  filter: blur(20px) drop-shadow(0 0 18px rgba(255, 106, 161, .42));
+  transform: translateZ(-68px);
+  animation: halo 3.8s ease-in-out infinite;
+}
+
+.heart-glow-3d::before,
+.heart-glow-3d::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 126px;
+  height: 190px;
+  border-radius: 64px 64px 0 0;
+  background: linear-gradient(180deg, rgba(255, 151, 189, .45), rgba(170, 110, 255, .25));
+  transform-origin: 0 100%;
+}
+
+.heart-glow-3d::before { left: 58px; transform: rotate(-45deg); }
+.heart-glow-3d::after { left: 4px; transform: rotate(45deg); transform-origin: 100% 100%; }
+
+.heart-words {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  transform-style: preserve-3d;
+}
+
+.word-3d {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 4px 6px;
+  border: 1px solid rgba(255, 255, 255, .32);
+  border-radius: 999px;
+  color: #fff9ea;
+  background: hsla(var(--hue), 78%, 62%, .23);
+  box-shadow: 0 5px 18px rgba(25, 5, 38, .24), inset 0 1px 0 rgba(255,255,255,.25);
+  font-size: var(--word-size, 11px);
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+  transform: translate3d(0, 0, 0) scale(.12);
+  transform-origin: center;
+  transition:
+    opacity .55s ease,
+    transform 1.35s cubic-bezier(.16,.82,.24,1),
+    filter .25s ease;
+  will-change: transform, opacity;
+}
+
+.word-3d.is-formed {
+  opacity: var(--opacity, .96);
+  transform: var(--target-transform);
+}
+
+.word-3d.is-front {
+  text-shadow: 0 0 16px rgba(255, 214, 168, .45);
+}
+
+.word-3d.word-hit {
+  filter: brightness(1.55) saturate(1.2);
+  animation: wordHit .48s cubic-bezier(.2,.9,.25,1.35);
+}
+
+.heart-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  color: rgba(255,255,255,.56);
+  font-size: 11px;
+  letter-spacing: .08em;
+  white-space: nowrap;
+}
+
+.spotlight-card.is-converging {
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(.28) rotate(8deg);
+}
+
+@keyframes wordHit {
+  0% { transform: var(--target-transform) scale(1); }
+  40% { transform: var(--target-transform) scale(1.55); }
+  100% { transform: var(--target-transform) scale(1); }
+}
+
