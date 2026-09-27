@@ -804,3 +804,67 @@ h1 strong {
   100% { transform: var(--target-transform) scale(1); }
 }
 
+
+/* Five wishes appear together on every three-beat audio pulse. */
+.batch-grid {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.batch-word {
+  display: grid;
+  place-items: center;
+  min-height: 48px;
+  padding: 7px 8px;
+  border: 1px solid rgba(255,255,255,.26);
+  border-radius: 16px;
+  color: #fff8e9;
+  background: linear-gradient(135deg, rgba(255,255,255,.17), rgba(255,255,255,.06));
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.2);
+  font-size: clamp(18px, 5.5vw, 28px);
+  font-weight: 900;
+  line-height: 1.15;
+  text-align: center;
+  text-shadow: 0 4px 15px rgba(255,130,91,.22);
+}
+
+.batch-word:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+.heart-controls {
+  position: absolute;
+  z-index: 12;
+  left: 50%;
+  bottom: 10px;
+  display: flex;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+
+.heart-control-button {
+  min-width: 66px;
+  padding: 8px 11px;
+  border: 1px solid rgba(255,255,255,.28);
+  border-radius: 999px;
+  color: rgba(255,255,255,.92);
+  background: rgba(42, 14, 55, .58);
+  box-shadow: 0 8px 24px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.16);
+  backdrop-filter: blur(12px);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.heart-control-button:active {
+  transform: scale(.95);
+  background: rgba(255,255,255,.2);
+}
+
+.heart-hint {
+  bottom: 54px;
+}
